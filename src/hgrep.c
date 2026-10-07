@@ -32,10 +32,11 @@ void cleanup_history() {
     }
 }
 
-void load_history_with_grep(const char *filter) {
+void load_history_with_grep(const char *grep_args) {
     FILE *fp;
     char line[MAX_LINE_LEN];
     char history_path[512];
+    char cmd[2048];
     const char *home = getenv("HOME");
 
     cleanup_history();
@@ -49,43 +50,32 @@ void load_history_with_grep(const char *filter) {
     }
 
     snprintf(history_path, sizeof(history_path), "%s/.bash_history", home);
-    fp = fopen(history_path, "r");
     
+    // Build grep command with line numbers
+    // If no args provided, just cat the file with line numbers
+    if (!grep_args || strlen(grep_args) == 0) {
+        snprintf(cmd, sizeof(cmd), "cat -n %s", history_path);
+    } else {
+        // Use grep with user-provided arguments and line numbers
+        snprintf(cmd, sizeof(cmd), "grep -n %s %s", grep_args, history_path);
+    }
+
+    fp = popen(cmd, "r");
     if (fp == NULL) {
         return;
     }
 
-    int total_lines = 0;
-    // First pass: count total lines
-    while (fgets(line, sizeof(line), fp) != NULL) {
-        total_lines++;
-    }
-    rewind(fp);
-
-    int current_line = 0;
-    // Second pass: read and display
+    // Read output from grep/cat
     while (fgets(line, sizeof(line), fp) != NULL && history.count < MAX_LINES) {
-        current_line++;
         line[strcspn(line, "\n")] = 0;
         
-        // Apply filter if provided
-        if (filter && strlen(filter) > 0) {
-            if (strstr(line, filter) == NULL) {
-                continue;
-            }
-        }
-        
-        // Create formatted line with line number starting from HISTSIZE offset
-        // Typically history starts at 1 and increments
-        char formatted_line[MAX_LINE_LEN + 32];
-        snprintf(formatted_line, sizeof(formatted_line), "%5d  %s", current_line, line);
-        
-        history.lines[history.count] = malloc(strlen(formatted_line) + 1);
-        strcpy(history.lines[history.count], formatted_line);
+        // Store the line (grep -n format includes line number)
+        history.lines[history.count] = malloc(strlen(line) + 1);
+        strcpy(history.lines[history.count], line);
         history.count++;
     }
 
-    fclose(fp);
+    pclose(fp);
     
     // Start selection at the last (most recent) command
     if (history.count > 0) {
@@ -295,14 +285,19 @@ void print_help() {
     printf("hgrep - Interactive History Grep\n");
     printf("\n");
     printf("USAGE:\n");
-    printf("  hgrep [PATTERN]\n");
+    printf("  hgrep [GREP_ARGS]\n");
     printf("\n");
     printf("DESCRIPTION:\n");
     printf("  Search bash history interactively and execute commands with optional editing.\n");
+    printf("  Supports all grep options for powerful filtering.\n");
     printf("\n");
-    printf("OPTIONS:\n");
-    printf("  -h, --help      Show this help message and exit\n");
-    printf("  PATTERN         Optional grep pattern to filter history on startup\n");
+    printf("GREP_ARGS:\n");
+    printf("  Pass any valid grep arguments to filter history:\n");
+    printf("  -i              Case-insensitive search\n");
+    printf("  -v              Invert match (show commands NOT matching pattern)\n");
+    printf("  -E              Use extended regex\n");
+    printf("  -e PATTERN      Specify pattern\n");
+    printf("  No args         Show all history\n");
     printf("\n");
     printf("KEYBOARD SHORTCUTS:\n");
     printf("\n");
@@ -324,7 +319,9 @@ void print_help() {
     printf("EXAMPLES:\n");
     printf("  hgrep                    # Show all history\n");
     printf("  hgrep docker             # Show only docker commands\n");
-    printf("  hgrep 'git commit'       # Show only git commit commands\n");
+    printf("  hgrep -i DOCKER          # Case-insensitive docker search\n");
+    printf("  hgrep -E 'git|svn'       # Show git or svn commands (regex)\n");
+    printf("  hgrep -v '#'             # Exclude comments\n");
     printf("\n");
 }
 
@@ -350,7 +347,7 @@ void execute_command(const char *history_line) {
 }
 
 int main(int argc, char *argv[]) {
-    char filter[256] = "";
+    char grep_args[1024] = "";
     int ch;
 
     // Check for help flag in any argument position
@@ -361,10 +358,38 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    // First non-flag argument is the filter
+    // Collect all non-help arguments into grep_args string
     if (argc > 1) {
-        strncpy(filter, argv[1], sizeof(filter) - 1);
-        filter[sizeof(filter) - 1] = '\0';
+        int pos = 0;
+        for (int i = 1; i < argc && pos < (int)sizeof(grep_args) - 1; i++) {
+            int arg_len = strlen(argv[i]);
+            // Check if argument needs quoting (contains spaces or special chars)
+            int needs_quote = 0;
+            for (int j = 0; j < arg_len; j++) {
+                if (argv[i][j] == ' ' || argv[i][j] == '|' || argv[i][j] == '*') {
+                    needs_quote = 1;
+                    break;
+                }
+            }
+            
+            if (pos > 0 && pos < (int)sizeof(grep_args) - 1) {
+                grep_args[pos++] = ' ';
+            }
+            
+            if (needs_quote && pos < (int)sizeof(grep_args) - 1) {
+                grep_args[pos++] = '\'';
+            }
+            
+            // Copy argument
+            for (int j = 0; j < arg_len && pos < (int)sizeof(grep_args) - 2; j++) {
+                grep_args[pos++] = argv[i][j];
+            }
+            
+            if (needs_quote && pos < (int)sizeof(grep_args) - 1) {
+                grep_args[pos++] = '\'';
+            }
+        }
+        grep_args[pos] = '\0';
     }
 
     // Initialize ncurses
@@ -376,10 +401,10 @@ int main(int argc, char *argv[]) {
     // Set up terminal
     set_escdelay(0);
 
-    load_history_with_grep(filter);
+    load_history_with_grep(grep_args);
 
     while (1) {
-        draw_ui(filter);
+        draw_ui(grep_args);
         ch = getch();
 
         if (history.editing) {
@@ -405,7 +430,7 @@ int main(int argc, char *argv[]) {
                 case KEY_ENTER:
                     if (history.count > 0 && history.selected >= 0) {
                         execute_command(history.lines[history.selected]);
-                        load_history_with_grep(filter);
+                        load_history_with_grep(grep_args);
                     }
                     break;
                 case 'q':
