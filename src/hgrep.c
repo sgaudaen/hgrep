@@ -9,15 +9,19 @@
 
 #define MAX_LINES 10000
 #define MAX_LINE_LEN 1024
+#define EDIT_BUF_LEN 2048
 
 typedef struct {
     char **lines;
     int count;
     int selected;
     int scroll_offset;
+    int editing;
+    char edit_buf[EDIT_BUF_LEN];
+    int edit_cursor;
 } History;
 
-History history = {NULL, 0, 0, 0};
+History history = {NULL, 0, 0, 0, 0, "", 0};
 
 void cleanup_history() {
     if (history.lines) {
@@ -97,7 +101,11 @@ void draw_ui(const char *filter) {
 
     // Draw header
     attron(A_BOLD);
-    mvprintw(0, 0, "hgrep - History Search");
+    if (history.editing) {
+        mvprintw(0, 0, "hgrep - Editing Command (ESC: Cancel | Enter: Execute)");
+    } else {
+        mvprintw(0, 0, "hgrep - History Search");
+    }
     attroff(A_BOLD);
     
     // Draw filter line
@@ -110,20 +118,16 @@ void draw_ui(const char *filter) {
     
     // Adjust scroll_offset so selected item is visible
     if (history.count > 0) {
-        // If selected is above scroll_offset, scroll up to show it
         if (history.selected < history.scroll_offset) {
             history.scroll_offset = history.selected;
         }
-        // If selected is below the viewport, scroll down to show it
         if (history.selected >= history.scroll_offset + max_display) {
             history.scroll_offset = history.selected - max_display + 1;
         }
         
-        // Make sure scroll_offset doesn't go negative
         if (history.scroll_offset < 0) {
             history.scroll_offset = 0;
         }
-        // Make sure we don't scroll past the end
         if (history.scroll_offset + max_display > history.count) {
             history.scroll_offset = history.count - max_display;
             if (history.scroll_offset < 0) {
@@ -136,15 +140,31 @@ void draw_ui(const char *filter) {
         int hist_idx = history.scroll_offset + i;
         if (hist_idx == history.selected) {
             attron(A_REVERSE);
-            mvprintw(display_start + i, 0, "%.*s", max_x - 1, history.lines[hist_idx]);
+            if (history.editing) {
+                // Show edited buffer on the selected line
+                mvprintw(display_start + i, 0, "%.*s", max_x - 1, history.edit_buf);
+            } else {
+                mvprintw(display_start + i, 0, "%.*s", max_x - 1, history.lines[hist_idx]);
+            }
             attroff(A_REVERSE);
+            
+            // Draw cursor after reverse video is off so it's visible
+            if (history.editing && history.edit_cursor <= (int)strlen(history.edit_buf)) {
+                attron(A_BOLD | A_UNDERLINE);
+                mvaddch(display_start + i, history.edit_cursor, '_');
+                attroff(A_BOLD | A_UNDERLINE);
+            }
         } else {
             mvprintw(display_start + i, 0, "%.*s", max_x - 1, history.lines[hist_idx]);
         }
     }
 
     // Draw footer
-    mvprintw(max_y - 1, 0, "↑: Older | ↓: Newer | Enter: Execute | Ctrl+C: Quit");
+    if (history.editing) {
+        mvprintw(max_y - 1, 0, "←/→: Move cursor | Home/End: Jump | Backspace/Del: Delete | ESC: Cancel | Enter: Execute");
+    } else {
+        mvprintw(max_y - 1, 0, "↑: Older | ↓: Newer | i: Edit | Enter: Execute | Ctrl+C: Quit");
+    }
     
     refresh();
 }
@@ -172,6 +192,103 @@ char* extract_command(const char *history_line) {
     char *cmd = malloc(strlen(p) + 1);
     strcpy(cmd, p);
     return cmd;
+}
+
+void start_editing() {
+    if (history.count > 0 && history.selected >= 0) {
+        // Clear the edit buffer
+        memset(history.edit_buf, 0, EDIT_BUF_LEN);
+        
+        char *cmd = extract_command(history.lines[history.selected]);
+        strncpy(history.edit_buf, cmd, EDIT_BUF_LEN - 1);
+        history.edit_buf[EDIT_BUF_LEN - 1] = '\0';
+        history.edit_cursor = strlen(history.edit_buf);
+        history.editing = 1;
+        free(cmd);
+    }
+}
+
+void handle_edit_input(int ch) {
+    if (ch == 27) {  // ESC key
+        history.editing = 0;
+        return;
+    }
+    
+    if (ch == '\n' || ch == '\r' || ch == KEY_ENTER) {
+        // Execute edited command
+        history.editing = 0;
+        endwin();
+        system("stty sane");
+        printf("\nExecuting: %s\n\n", history.edit_buf);
+        fflush(stdout);
+        system(history.edit_buf);
+        exit(0);
+    }
+    
+    if (ch == KEY_LEFT) {
+        if (history.edit_cursor > 0) {
+            history.edit_cursor--;
+        }
+        return;
+    }
+    
+    if (ch == KEY_RIGHT) {
+        if (history.edit_cursor < (int)strlen(history.edit_buf)) {
+            history.edit_cursor++;
+        }
+        return;
+    }
+    
+    if (ch == KEY_HOME) {
+        history.edit_cursor = 0;
+        return;
+    }
+    
+    if (ch == KEY_END) {
+        history.edit_cursor = strlen(history.edit_buf);
+        return;
+    }
+    
+    if (ch == KEY_BACKSPACE || ch == 127 || ch == '\b') {
+        if (history.edit_cursor > 0) {
+            // Shift characters left
+            for (int i = history.edit_cursor - 1; i < (int)strlen(history.edit_buf); i++) {
+                history.edit_buf[i] = history.edit_buf[i + 1];
+            }
+            history.edit_cursor--;
+        }
+        return;
+    }
+    
+    if (ch == KEY_DC) {  // Delete key
+        if (history.edit_cursor < (int)strlen(history.edit_buf)) {
+            // Shift characters left
+            for (int i = history.edit_cursor; i < (int)strlen(history.edit_buf); i++) {
+                history.edit_buf[i] = history.edit_buf[i + 1];
+            }
+        }
+        return;
+    }
+    
+    // Handle printable characters
+    if (ch >= 32 && ch < 127) {
+        if (history.edit_cursor < EDIT_BUF_LEN - 1) {
+            // Get length before modification
+            int len = strlen(history.edit_buf);
+            
+            // Shift characters right to make room
+            for (int i = len; i > history.edit_cursor; i--) {
+                history.edit_buf[i] = history.edit_buf[i - 1];
+            }
+            
+            // Insert the new character
+            history.edit_buf[history.edit_cursor] = ch;
+            history.edit_cursor++;
+            
+            // Null terminate at the new end of string (old length + 1)
+            history.edit_buf[len + 1] = '\0';
+        }
+    }
 }
 
 void execute_command(const char *history_line) {
@@ -219,32 +336,40 @@ int main(int argc, char *argv[]) {
         draw_ui(filter);
         ch = getch();
 
-        switch (ch) {
-            case KEY_UP:
-                if (history.selected > 0) {
-                    history.selected--;
-                }
-                break;
-            case KEY_DOWN:
-                if (history.selected < history.count - 1) {
-                    history.selected++;
-                }
-                break;
-            case '\n':
-            case '\r':
-            case KEY_ENTER:
-                if (history.count > 0 && history.selected >= 0) {
-                    execute_command(history.lines[history.selected]);
-                    load_history_with_grep(filter);
-                }
-                break;
-            case 'q':
-            case 'Q':
-            case 3:  // Ctrl+C
-                endwin();
-                cleanup_history();
-                exit(0);
-                break;
+        if (history.editing) {
+            handle_edit_input(ch);
+        } else {
+            switch (ch) {
+                case KEY_UP:
+                    if (history.selected > 0) {
+                        history.selected--;
+                    }
+                    break;
+                case KEY_DOWN:
+                    if (history.selected < history.count - 1) {
+                        history.selected++;
+                    }
+                    break;
+                case 'i':
+                case 'I':
+                    start_editing();
+                    break;
+                case '\n':
+                case '\r':
+                case KEY_ENTER:
+                    if (history.count > 0 && history.selected >= 0) {
+                        execute_command(history.lines[history.selected]);
+                        load_history_with_grep(filter);
+                    }
+                    break;
+                case 'q':
+                case 'Q':
+                case 3:  // Ctrl+C
+                    endwin();
+                    cleanup_history();
+                    exit(0);
+                    break;
+            }
         }
     }
 
