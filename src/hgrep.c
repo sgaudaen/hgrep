@@ -163,7 +163,7 @@ void draw_ui(const char *filter) {
     if (history.editing) {
         mvprintw(max_y - 1, 0, "←/→: Move cursor | Home/End: Jump | Backspace/Del: Delete | ESC: Cancel | Enter: Execute");
     } else {
-        mvprintw(max_y - 1, 0, "↑: Older | ↓: Newer | i: Edit | Enter: Execute | Ctrl+C: Quit");
+        mvprintw(max_y - 1, 0, "↑: Older | ↓: Newer | i: Edit | q/Ctrl+C: Quit | Enter: Execute");
     }
     
     refresh();
