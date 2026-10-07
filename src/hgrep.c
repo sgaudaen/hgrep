@@ -161,9 +161,9 @@ void draw_ui(const char *filter) {
 
     // Draw footer
     if (history.editing) {
-        mvprintw(max_y - 1, 0, "←/→: Move cursor | Home/End: Jump | Backspace/Del: Delete | ESC: Cancel | Enter: Execute");
+        mvprintw(max_y - 1, 0, "Left/Right: Move | Home/End: Jump | Backspace/Del: Delete | ESC: Cancel | Enter: Execute");
     } else {
-        mvprintw(max_y - 1, 0, "↑: Older | ↓: Newer | i: Edit | q/Ctrl+C: Quit | Enter: Execute");
+        mvprintw(max_y - 1, 0, "Up/Down: Navigate | i: Edit | q/Ctrl+C: Quit | Enter: Execute");
     }
     
     refresh();
@@ -291,6 +291,43 @@ void handle_edit_input(int ch) {
     }
 }
 
+void print_help() {
+    printf("hgrep - Interactive History Grep\n");
+    printf("\n");
+    printf("USAGE:\n");
+    printf("  hgrep [PATTERN]\n");
+    printf("\n");
+    printf("DESCRIPTION:\n");
+    printf("  Search bash history interactively and execute commands with optional editing.\n");
+    printf("\n");
+    printf("OPTIONS:\n");
+    printf("  -h, --help      Show this help message and exit\n");
+    printf("  PATTERN         Optional grep pattern to filter history on startup\n");
+    printf("\n");
+    printf("KEYBOARD SHORTCUTS:\n");
+    printf("\n");
+    printf("Normal Mode:\n");
+    printf("  Up/Down         Navigate through history (Up = older, Down = newer)\n");
+    printf("  i               Enter edit mode to modify the selected command\n");
+    printf("  Enter           Execute the selected command\n");
+    printf("  q, Q            Quit the program\n");
+    printf("  Ctrl+C          Quit the program\n");
+    printf("\n");
+    printf("Edit Mode:\n");
+    printf("  Left/Right      Move cursor left/right\n");
+    printf("  Home/End        Jump to beginning/end of line\n");
+    printf("  Backspace/Del   Delete characters\n");
+    printf("  Type            Insert characters at cursor\n");
+    printf("  Enter           Execute the edited command\n");
+    printf("  ESC             Cancel editing and return to normal mode\n");
+    printf("\n");
+    printf("EXAMPLES:\n");
+    printf("  hgrep                    # Show all history\n");
+    printf("  hgrep docker             # Show only docker commands\n");
+    printf("  hgrep 'git commit'       # Show only git commit commands\n");
+    printf("\n");
+}
+
 void execute_command(const char *history_line) {
     char *cmd = extract_command(history_line);
     
@@ -316,6 +353,15 @@ int main(int argc, char *argv[]) {
     char filter[256] = "";
     int ch;
 
+    // Check for help flag in any argument position
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+            print_help();
+            return 0;
+        }
+    }
+
+    // First non-flag argument is the filter
     if (argc > 1) {
         strncpy(filter, argv[1], sizeof(filter) - 1);
         filter[sizeof(filter) - 1] = '\0';
