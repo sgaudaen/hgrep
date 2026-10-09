@@ -160,7 +160,7 @@ void draw_ui(const char *filter) {
 }
 
 char* extract_command(const char *history_line) {
-    // History format is typically: "  123  command"
+    // History format from grep -n: "123:command" or from cat -n: "  123  command"
     // Skip leading spaces and line number
     const char *p = history_line;
     
@@ -174,9 +174,14 @@ char* extract_command(const char *history_line) {
         p++;
     }
     
-    // Skip whitespace after line number
-    while (*p == ' ' || *p == '\t') {
+    // Skip the colon separator (from grep -n) or whitespace (from cat -n)
+    if (*p == ':') {
         p++;
+    } else {
+        // Skip whitespace after line number (from cat -n)
+        while (*p == ' ' || *p == '\t') {
+            p++;
+        }
     }
     
     char *cmd = malloc(strlen(p) + 1);
