@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 
 #define MAX_LINES 10000
@@ -22,6 +23,10 @@ typedef struct {
 } History;
 
 History history = {NULL, 0, 0, 0, 0, "", 0};
+
+// Forward declaration
+void execute_in_interactive_shell(const char *cmd);
+
 
 void cleanup_history() {
     if (history.lines) {
@@ -216,7 +221,7 @@ void handle_edit_input(int ch) {
         system("stty sane");
         printf("\nExecuting: %s\n\n", history.edit_buf);
         fflush(stdout);
-        system(history.edit_buf);
+        execute_in_interactive_shell(history.edit_buf);
         exit(0);
     }
     
@@ -330,6 +335,27 @@ void print_help() {
     printf("\n");
 }
 
+// Execute a command in an interactive bash shell to ensure it's added to history
+void execute_in_interactive_shell(const char *cmd) {
+    const char *home = getenv("HOME");
+    if (!home) {
+        home = "/root";
+    }
+    
+    char history_file[512];
+    snprintf(history_file, sizeof(history_file), "%s/.bash_history", home);
+    
+    // Append the command to bash history file
+    FILE *hist = fopen(history_file, "a");
+    if (hist != NULL) {
+        fprintf(hist, "%s\n", cmd);
+        fclose(hist);
+    }
+    
+    // Execute the command in the current shell
+    system(cmd);
+}
+
 void execute_command(const char *history_line) {
     char *cmd = extract_command(history_line);
     
@@ -342,8 +368,8 @@ void execute_command(const char *history_line) {
     printf("\nExecuting: %s\n\n", cmd);
     fflush(stdout);
     
-    // Run the command
-    system(cmd);
+    // Run the command in an interactive bash shell so it's added to history
+    execute_in_interactive_shell(cmd);
     
     free(cmd);
     
